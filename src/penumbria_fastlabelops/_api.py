@@ -34,6 +34,40 @@ def label_bboxes_3d(
     return _core.label_bboxes_3d(arr)
 
 
+def watershed_3d(
+    prediction: NDArray[np.floating],
+    markers: NDArray[np.integer],
+    background_threshold: float = 0.2,
+) -> NDArray[np.integer]:
+    """Run the exact simple 3D watershed mode used by Penumbria.
+
+    This is specialized to Penumbria's current call to scikit-image:
+
+    ``watershed(-prediction, markers, mask=prediction > background_threshold)``
+
+    with default connectivity (6-neighbor in 3D), ``compactness=0`` and
+    ``watershed_line=False``. Prediction is converted to float32 because Penumbria
+    does that before watershed. Marker values are preserved; zero is background.
+
+    The implementation avoids materializing ``-prediction``, the boolean mask,
+    float64 image copies, padded image/marker/mask arrays, and the final crop copy
+    used by the generic scikit-image wrapper.
+    """
+    prediction_arr = np.asarray(prediction, dtype=np.float32)
+    if prediction_arr.ndim != 3:
+        raise ValueError(f"prediction must be 3D, got {prediction_arr.ndim}D")
+    prediction_arr = np.ascontiguousarray(prediction_arr)
+
+    marker_arr = _labels3d(markers)
+    if marker_arr.shape != prediction_arr.shape:
+        raise ValueError(
+            f"markers shape {marker_arr.shape} does not match prediction {prediction_arr.shape}"
+        )
+
+    threshold = float(np.float32(background_threshold))
+    return _core.watershed_3d(prediction_arr, marker_arr, threshold)
+
+
 def filter_instances_3d(
     labels: NDArray[np.integer],
     scores: NDArray[np.floating],
