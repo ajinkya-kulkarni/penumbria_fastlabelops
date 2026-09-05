@@ -1,4 +1,4 @@
-"""Benchmark Penumbria's scikit-image watershed call against watershed_3d."""
+"""Benchmark Penumbria's exact scikit-image watershed call against watershed_3d."""
 
 from __future__ import annotations
 
@@ -27,10 +27,11 @@ def make_case(shape=(32, 128, 128), seed=13):
 
 def baseline(prediction, markers, background_threshold):
     threshold = np.float32(background_threshold)
+    background_image = (prediction > threshold).astype(int)
     return skimage_watershed(
         -prediction,
         markers,
-        mask=prediction > threshold,
+        mask=background_image,
     )
 
 
@@ -77,7 +78,8 @@ def main():
 
     print(
         "watershed_3d: "
-        f"skimage {old_t:.4f}s | fast {new_t:.4f}s | speedup {old_t / new_t:.2f}x"
+        f"Penumbria/skimage {old_t:.4f}s | fast {new_t:.4f}s | "
+        f"speedup {old_t / new_t:.2f}x"
     )
 
 
