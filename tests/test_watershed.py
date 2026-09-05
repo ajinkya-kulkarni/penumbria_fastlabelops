@@ -47,6 +47,17 @@ def test_watershed_plateau_tie_break_matches_skimage_bitwise():
     np.testing.assert_array_equal(got, expected)
 
 
+def test_watershed_multivoxel_markers_match_skimage_bitwise():
+    prediction = np.ones((5, 7, 11), dtype=np.float32)
+    markers = np.zeros(prediction.shape, dtype=np.int32)
+    markers[2, 2:5, 1:3] = 4
+    markers[2, 2:5, 8:10] = 11
+
+    got = watershed_3d(prediction, markers, background_threshold=0.0)
+    expected = reference_watershed(prediction, markers, 0.0)
+    np.testing.assert_array_equal(got, expected)
+
+
 def test_watershed_quantized_ties_match_skimage_bitwise():
     rng = np.random.default_rng(23)
     prediction = (rng.integers(0, 5, size=(9, 10, 11)) / 4).astype(np.float32)

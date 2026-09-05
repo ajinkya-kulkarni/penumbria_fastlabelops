@@ -356,7 +356,7 @@ bool watershed_smaller(const WatershedItem& a, const WatershedItem& b) {
 
 class WatershedHeap {
 public:
-    WatershedHeap() { data_.reserve(1000); }
+    WatershedHeap() = default;
 
     bool empty() const { return data_.empty(); }
 

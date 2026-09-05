@@ -97,11 +97,11 @@ else:
 `watershed_3d` is intentionally specialized to exactly the scikit-image mode Penumbria currently
 uses: supplied markers, default connectivity (6-neighbor in 3D), `compactness=0`, and
 `watershed_line=False`. It preserves marker values and uses the same priority-queue flood and age
-Tie-break behavior.
+tie-break behavior.
 
-The specialized implementation does not materialize the negated prediction, explicit background mask,
-float64 image conversion, padded image/marker/mask arrays, or final crop copy required by the generic
-scikit-image wrapper.
+The specialized implementation does not materialize the negated prediction, explicit integer
+background mask, float64 image conversion, padded image/marker/mask arrays, or final crop copy required
+by the generic scikit-image wrapper.
 
 ## 3. `postprocess.py`: use the fused 3D instance filter
 
@@ -137,18 +137,21 @@ The 3D compiled function preserves the current rules exactly:
 ## Validation and speed
 
 All equivalence tests use exact array equality. The watershed suite includes random continuous fields,
-flat plateaus, quantized ties, mask holes, masked-out markers, non-contiguous inputs, and all supported
-marker integer dtypes.
+flat plateaus, quantized ties, multi-voxel markers, mask holes, masked-out markers, non-contiguous
+inputs, and all supported marker integer dtypes.
 
-The label-operation benchmark uses the corresponding Penumbria-style baselines and verifies output
-equivalence before timing. On the documented synthetic 64 x 256 x 256 (4.19M voxel), 500-instance
-workload, representative conservative results are:
+The benchmarks use the corresponding Penumbria-style baselines and verify output equivalence before
+timing. Representative 64 x 256 x 256 (4.19M voxel) results are:
 
 | Call site | Penumbria-style baseline | `penumbria_fastlabelops` | Speedup |
 | --- | ---: | ---: | ---: |
 | preprocessing bbox discovery | ~6.1 s | ~0.008 s | ~800x |
+| 3D watershed | 1.9166 s | 1.6607 s | 1.15x |
 | 3D post-watershed filtering | ~0.028 s | ~0.009 s | ~3x |
 
+The watershed CPU speedup is modest; its additional benefit is avoiding several full-volume temporary
+arrays in Penumbria's generic scikit-image call path.
+
 Run `python benchmarks/benchmark_penumbria.py` for the two label operations and
-`python benchmarks/benchmark_watershed.py` for the watershed comparison on the target machine.
+`python benchmarks/benchmark_watershed.py --shape 64,256,256 --repeats 2` for the watershed comparison.
 These are operation-level measurements, not end-to-end Penumbria training or inference claims.
