@@ -53,6 +53,10 @@ The behavior intentionally matches Penumbria's current post-watershed rules:
 - compact survivors to `1..N` in ascending original-label order
 - preserve `0` as background
 
+## Penumbria integration
+
+See [`docs/PENUMBRIA_INTEGRATION.md`](docs/PENUMBRIA_INTEGRATION.md) for the two minimal current-`main` call-site changes. The guide preserves Penumbria's existing local EDT construction and keeps the original 2D postprocessing path as a fallback.
+
 ## Speed
 
 The benchmark reproduces the relevant current Penumbria code patterns and verifies exact output equivalence before reporting timings.
