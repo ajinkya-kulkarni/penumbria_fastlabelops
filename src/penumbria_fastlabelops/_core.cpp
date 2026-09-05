@@ -8,6 +8,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -340,9 +341,254 @@ PyObject* py_filter_instances_3d(PyObject*, PyObject* args) {
     return nullptr;
 }
 
+struct WatershedItem {
+    float value;
+    int32_t age;
+    npy_intp index;
+};
+
+bool watershed_smaller(const WatershedItem& a, const WatershedItem& b) {
+    if (a.value != b.value) {
+        return a.value < b.value;
+    }
+    return a.age < b.age;
+}
+
+class WatershedHeap {
+public:
+    WatershedHeap() { data_.reserve(1000); }
+
+    bool empty() const { return data_.empty(); }
+
+    void push(const WatershedItem& item) {
+        size_t child = data_.size();
+        data_.push_back(item);
+        while (child > 0) {
+            const size_t parent = (child + 1) / 2 - 1;
+            if (!watershed_smaller(data_[child], data_[parent])) {
+                break;
+            }
+            std::swap(data_[parent], data_[child]);
+            child = parent;
+        }
+    }
+
+    WatershedItem pop() {
+        const WatershedItem result = data_.front();
+        const size_t remaining = data_.size() - 1;
+        if (remaining == 0) {
+            data_.pop_back();
+            return result;
+        }
+
+        std::swap(data_.front(), data_.back());
+        data_.pop_back();
+
+        size_t i = 0;
+        while (true) {
+            size_t smallest = i;
+            const size_t left = i * 2 + 1;
+            const size_t right = i * 2 + 2;
+            if (left >= data_.size()) {
+                break;
+            }
+            if (watershed_smaller(data_[left], data_[i])) {
+                smallest = left;
+            }
+            if (right < data_.size() && watershed_smaller(data_[right], data_[smallest])) {
+                smallest = right;
+            }
+            if (smallest == i) {
+                break;
+            }
+            std::swap(data_[i], data_[smallest]);
+            i = smallest;
+        }
+        return result;
+    }
+
+private:
+    std::vector<WatershedItem> data_;
+};
+
+template <typename LabelT>
+PyObject* watershed_impl(
+    PyArrayObject* prediction,
+    PyArrayObject* markers,
+    float background_threshold
+) {
+    const auto* pred = static_cast<const float*>(PyArray_DATA(prediction));
+    const auto* marker_data = static_cast<const LabelT*>(PyArray_DATA(markers));
+    const npy_intp* dims = PyArray_DIMS(prediction);
+    const npy_intp D = dims[0];
+    const npy_intp H = dims[1];
+    const npy_intp W = dims[2];
+    const npy_intp plane = H * W;
+    const npy_intp n = PyArray_SIZE(prediction);
+
+    auto* out = reinterpret_cast<PyArrayObject*>(PyArray_SimpleNew(3, dims, PyArray_TYPE(markers)));
+    if (out == nullptr) {
+        return nullptr;
+    }
+    auto* out_data = static_cast<LabelT*>(PyArray_DATA(out));
+
+    WatershedHeap heap;
+    bool invalid_marker = false;
+    bool allocation_failed = false;
+    bool age_overflow = false;
+
+    Py_BEGIN_ALLOW_THREADS
+    try {
+        for (npy_intp i = 0; i < n; ++i) {
+            const LabelT marker = marker_data[i];
+            if constexpr (std::numeric_limits<LabelT>::is_signed) {
+                if (marker < 0) {
+                    invalid_marker = true;
+                    out_data[i] = static_cast<LabelT>(0);
+                    continue;
+                }
+            }
+            if (pred[i] > background_threshold && marker != 0) {
+                out_data[i] = marker;
+                heap.push(WatershedItem{-pred[i], 0, i});
+            } else {
+                out_data[i] = static_cast<LabelT>(0);
+            }
+        }
+
+        int64_t age = 1;
+        while (!heap.empty()) {
+            const WatershedItem elem = heap.pop();
+            const LabelT current_label = out_data[elem.index];
+
+            const npy_intp z = elem.index / plane;
+            const npy_intp rem = elem.index - z * plane;
+            const npy_intp y = rem / W;
+            const npy_intp x = rem - y * W;
+
+            const npy_intp neighbor_indices[6] = {
+                elem.index - plane,
+                elem.index - W,
+                elem.index - 1,
+                elem.index + 1,
+                elem.index + W,
+                elem.index + plane,
+            };
+            const bool valid[6] = {
+                z > 0,
+                y > 0,
+                x > 0,
+                x + 1 < W,
+                y + 1 < H,
+                z + 1 < D,
+            };
+
+            for (int k = 0; k < 6; ++k) {
+                if (!valid[k]) {
+                    continue;
+                }
+                const npy_intp neighbor = neighbor_indices[k];
+                if (!(pred[neighbor] > background_threshold)) {
+                    continue;
+                }
+                if (out_data[neighbor] != 0) {
+                    continue;
+                }
+
+                ++age;
+                if (age > std::numeric_limits<int32_t>::max()) {
+                    age_overflow = true;
+                    break;
+                }
+
+                out_data[neighbor] = current_label;
+                float value = -pred[neighbor];
+                if (value < elem.value) {
+                    value = elem.value;
+                }
+                heap.push(WatershedItem{value, static_cast<int32_t>(age), neighbor});
+            }
+            if (age_overflow) {
+                break;
+            }
+        }
+    } catch (const std::bad_alloc&) {
+        allocation_failed = true;
+    } catch (const std::length_error&) {
+        allocation_failed = true;
+    }
+    Py_END_ALLOW_THREADS
+
+    if (allocation_failed) {
+        Py_DECREF(out);
+        return PyErr_NoMemory();
+    }
+    if (invalid_marker) {
+        Py_DECREF(out);
+        PyErr_SetString(PyExc_ValueError, "markers must be non-negative");
+        return nullptr;
+    }
+    if (age_overflow) {
+        Py_DECREF(out);
+        PyErr_SetString(PyExc_OverflowError, "watershed queue age exceeded int32 range");
+        return nullptr;
+    }
+
+    return reinterpret_cast<PyObject*>(out);
+}
+
+PyObject* py_watershed_3d(PyObject*, PyObject* args) {
+    PyArrayObject* prediction = nullptr;
+    PyArrayObject* markers = nullptr;
+    double background_threshold = 0.0;
+    if (!PyArg_ParseTuple(
+            args,
+            "O!O!d",
+            &PyArray_Type,
+            &prediction,
+            &PyArray_Type,
+            &markers,
+            &background_threshold)) {
+        return nullptr;
+    }
+
+    if (PyArray_NDIM(prediction) != 3 || PyArray_TYPE(prediction) != NPY_FLOAT32 ||
+        !PyArray_ISCARRAY_RO(prediction)) {
+        PyErr_SetString(PyExc_ValueError, "prediction must be contiguous float32 3D array");
+        return nullptr;
+    }
+    if (!validate_labels(markers)) {
+        return nullptr;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+        if (PyArray_DIMS(prediction)[axis] != PyArray_DIMS(markers)[axis]) {
+            PyErr_SetString(PyExc_ValueError, "prediction and markers shapes must match");
+            return nullptr;
+        }
+    }
+
+    const float threshold = static_cast<float>(background_threshold);
+    switch (PyArray_TYPE(markers)) {
+        case NPY_INT32:
+            return watershed_impl<int32_t>(prediction, markers, threshold);
+        case NPY_UINT32:
+            return watershed_impl<uint32_t>(prediction, markers, threshold);
+        case NPY_INT64:
+            return watershed_impl<int64_t>(prediction, markers, threshold);
+        case NPY_UINT64:
+            return watershed_impl<uint64_t>(prediction, markers, threshold);
+        default:
+            break;
+    }
+
+    PyErr_SetString(PyExc_TypeError, "unsupported markers dtype");
+    return nullptr;
+}
+
 PyMethodDef methods[] = {
     {"label_bboxes_3d", py_label_bboxes_3d, METH_VARARGS, "Compute 3D label bounding boxes."},
     {"filter_instances_3d", py_filter_instances_3d, METH_VARARGS, "Filter and compact 3D labels."},
+    {"watershed_3d", py_watershed_3d, METH_VARARGS, "Run Penumbria-specialized 3D watershed."},
     {nullptr, nullptr, 0, nullptr},
 };
 
