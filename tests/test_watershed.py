@@ -3,8 +3,8 @@ import pytest
 
 from penumbria_fastlabelops import watershed_3d
 
-skimage = pytest.importorskip("skimage")
-from skimage.segmentation import watershed as skimage_watershed
+skimage_segmentation = pytest.importorskip("skimage.segmentation")
+skimage_watershed = skimage_segmentation.watershed
 
 
 def reference_watershed(prediction, markers, background_threshold):
