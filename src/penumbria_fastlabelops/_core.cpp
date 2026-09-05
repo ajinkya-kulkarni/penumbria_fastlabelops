@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <new>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -55,60 +57,71 @@ template <typename LabelT>
 PyObject* bboxes_impl(PyArrayObject* labels) {
     const auto* data = static_cast<const LabelT*>(PyArray_DATA(labels));
     const npy_intp* dims = PyArray_DIMS(labels);
+    const uint64_t nvox = static_cast<uint64_t>(PyArray_SIZE(labels));
     const int64_t inf = std::numeric_limits<int64_t>::max();
 
     std::vector<int64_t> min_z(16, inf), min_y(16, inf), min_x(16, inf);
     std::vector<int64_t> max_z(16, -1), max_y(16, -1), max_x(16, -1);
     std::vector<uint8_t> seen(16, 0);
     size_t max_id = 0;
-    bool negative = false;
+    bool invalid_label = false;
+    bool allocation_failed = false;
 
     const int64_t D = static_cast<int64_t>(dims[0]);
     const int64_t H = static_cast<int64_t>(dims[1]);
     const int64_t W = static_cast<int64_t>(dims[2]);
 
     Py_BEGIN_ALLOW_THREADS
-    for (int64_t z = 0; z < D; ++z) {
-        for (int64_t y = 0; y < H; ++y) {
-            const npy_intp base = (z * H + y) * W;
-            for (int64_t x = 0; x < W; ++x) {
-                const LabelT raw = data[base + x];
-                if constexpr (std::numeric_limits<LabelT>::is_signed) {
-                    if (raw < 0) {
-                        negative = true;
+    try {
+        for (int64_t z = 0; z < D; ++z) {
+            for (int64_t y = 0; y < H; ++y) {
+                const npy_intp base = (z * H + y) * W;
+                for (int64_t x = 0; x < W; ++x) {
+                    const LabelT raw = data[base + x];
+                    if constexpr (std::numeric_limits<LabelT>::is_signed) {
+                        if (raw < 0) {
+                            invalid_label = true;
+                            continue;
+                        }
+                    }
+                    const uint64_t id64 = static_cast<uint64_t>(raw);
+                    if (id64 == 0) {
                         continue;
                     }
+                    if (id64 > nvox) {
+                        invalid_label = true;
+                        continue;
+                    }
+                    const size_t id = static_cast<size_t>(id64);
+                    grow_to(min_z, id, inf);
+                    grow_to(min_y, id, inf);
+                    grow_to(min_x, id, inf);
+                    grow_to(max_z, id, int64_t{-1});
+                    grow_to(max_y, id, int64_t{-1});
+                    grow_to(max_x, id, int64_t{-1});
+                    grow_to(seen, id, uint8_t{0});
+                    max_id = std::max(max_id, id);
+                    seen[id] = 1;
+                    min_z[id] = std::min(min_z[id], z);
+                    min_y[id] = std::min(min_y[id], y);
+                    min_x[id] = std::min(min_x[id], x);
+                    max_z[id] = std::max(max_z[id], z + 1);
+                    max_y[id] = std::max(max_y[id], y + 1);
+                    max_x[id] = std::max(max_x[id], x + 1);
                 }
-                const uint64_t id64 = static_cast<uint64_t>(raw);
-                if (id64 == 0) {
-                    continue;
-                }
-                if (id64 > static_cast<uint64_t>(D * H * W)) {
-                    negative = true;
-                    continue;
-                }
-                const size_t id = static_cast<size_t>(id64);
-                grow_to(min_z, id, inf);
-                grow_to(min_y, id, inf);
-                grow_to(min_x, id, inf);
-                grow_to(max_z, id, int64_t{-1});
-                grow_to(max_y, id, int64_t{-1});
-                grow_to(max_x, id, int64_t{-1});
-                grow_to(seen, id, uint8_t{0});
-                max_id = std::max(max_id, id);
-                seen[id] = 1;
-                min_z[id] = std::min(min_z[id], z);
-                min_y[id] = std::min(min_y[id], y);
-                min_x[id] = std::min(min_x[id], x);
-                max_z[id] = std::max(max_z[id], z + 1);
-                max_y[id] = std::max(max_y[id], y + 1);
-                max_x[id] = std::max(max_x[id], x + 1);
             }
         }
+    } catch (const std::bad_alloc&) {
+        allocation_failed = true;
+    } catch (const std::length_error&) {
+        allocation_failed = true;
     }
     Py_END_ALLOW_THREADS
 
-    if (negative) {
+    if (allocation_failed) {
+        return PyErr_NoMemory();
+    }
+    if (invalid_label) {
         PyErr_SetString(PyExc_ValueError, "labels must be non-negative with Penumbria-style compact IDs");
         return nullptr;
     }
@@ -187,46 +200,64 @@ PyObject* filter_impl(
     std::vector<double> maxima(16, -std::numeric_limits<double>::infinity());
     std::vector<uint8_t> has_nan(16, 0);
     size_t max_id = 0;
-    bool negative = false;
+    bool invalid_label = false;
+    bool allocation_failed = false;
 
     Py_BEGIN_ALLOW_THREADS
-    for (npy_intp i = 0; i < n; ++i) {
-        const LabelT raw = label_data[i];
-        if constexpr (std::numeric_limits<LabelT>::is_signed) {
-            if (raw < 0) {
-                negative = true;
+    try {
+        for (npy_intp i = 0; i < n; ++i) {
+            const LabelT raw = label_data[i];
+            if constexpr (std::numeric_limits<LabelT>::is_signed) {
+                if (raw < 0) {
+                    invalid_label = true;
+                    continue;
+                }
+            }
+            const uint64_t id64 = static_cast<uint64_t>(raw);
+            if (id64 == 0) {
                 continue;
             }
+            if (id64 > static_cast<uint64_t>(n)) {
+                invalid_label = true;
+                continue;
+            }
+            const size_t id = static_cast<size_t>(id64);
+            grow_to(counts, id, uint64_t{0});
+            grow_to(maxima, id, -std::numeric_limits<double>::infinity());
+            grow_to(has_nan, id, uint8_t{0});
+            max_id = std::max(max_id, id);
+            ++counts[id];
+            const double score = static_cast<double>(score_data[i]);
+            if (std::isnan(score)) {
+                has_nan[id] = 1;
+            } else if (score > maxima[id]) {
+                maxima[id] = score;
+            }
         }
-        const uint64_t id64 = static_cast<uint64_t>(raw);
-        if (id64 == 0) {
-            continue;
-        }
-        if (id64 > static_cast<uint64_t>(n)) {
-            negative = true;
-            continue;
-        }
-        const size_t id = static_cast<size_t>(id64);
-        grow_to(counts, id, uint64_t{0});
-        grow_to(maxima, id, -std::numeric_limits<double>::infinity());
-        grow_to(has_nan, id, uint8_t{0});
-        max_id = std::max(max_id, id);
-        ++counts[id];
-        const double score = static_cast<double>(score_data[i]);
-        if (std::isnan(score)) {
-            has_nan[id] = 1;
-        } else if (score > maxima[id]) {
-            maxima[id] = score;
-        }
+    } catch (const std::bad_alloc&) {
+        allocation_failed = true;
+    } catch (const std::length_error&) {
+        allocation_failed = true;
     }
     Py_END_ALLOW_THREADS
 
-    if (negative) {
+    if (allocation_failed) {
+        return PyErr_NoMemory();
+    }
+    if (invalid_label) {
         PyErr_SetString(PyExc_ValueError, "labels must be non-negative with Penumbria-style compact IDs");
         return nullptr;
     }
 
-    std::vector<LabelT> mapping(max_id + 1, static_cast<LabelT>(0));
+    std::vector<LabelT> mapping;
+    try {
+        mapping.assign(max_id + 1, static_cast<LabelT>(0));
+    } catch (const std::bad_alloc&) {
+        return PyErr_NoMemory();
+    } catch (const std::length_error&) {
+        return PyErr_NoMemory();
+    }
+
     uint64_t next_id = 1;
     for (size_t id = 1; id <= max_id; ++id) {
         if (!has_nan[id] && counts[id] > minimum_cell_size && maxima[id] > confidence_minimum) {
