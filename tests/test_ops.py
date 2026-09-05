@@ -21,7 +21,9 @@ def reference_filter(labels, scores, minimum_cell_size, confidence_minimum):
     next_id = 1
     for label_id in range(1, int(labels.max()) + 1):
         mask = labels == label_id
-        if np.count_nonzero(mask) > minimum_cell_size and np.max(scores[mask], initial=-np.inf) > confidence_minimum:
+        if np.count_nonzero(mask) > minimum_cell_size and np.max(
+            scores[mask], initial=-np.inf
+        ) > confidence_minimum:
             out[mask] = next_id
             next_id += 1
     return out
@@ -68,7 +70,12 @@ def test_filter_matches_penumbria_semantics():
     scores[labels == 7] = 0.8
     scores[labels == 9] = 0.9
 
-    got = filter_instances_3d(labels, scores, minimum_cell_size=3, cell_confidence_minimum=0.5)
+    got = filter_instances_3d(
+        labels,
+        scores,
+        minimum_cell_size=3,
+        cell_confidence_minimum=0.5,
+    )
     expected = reference_filter(labels, scores, 3, 0.5)
     np.testing.assert_array_equal(got, expected)
     assert got.dtype == labels.dtype
@@ -80,9 +87,40 @@ def test_filter_random_matches_reference(label_dtype, score_dtype):
     rng = np.random.default_rng(11)
     labels = rng.integers(0, 25, size=(19, 17, 13), dtype=np.int32).astype(label_dtype)
     scores = rng.random(labels.shape).astype(score_dtype)
-    got = filter_instances_3d(labels, scores, minimum_cell_size=5, cell_confidence_minimum=0.85)
+    got = filter_instances_3d(
+        labels,
+        scores,
+        minimum_cell_size=5,
+        cell_confidence_minimum=0.85,
+    )
     expected = reference_filter(labels, scores, 5, 0.85)
     np.testing.assert_array_equal(got, expected)
+
+
+def test_filter_nan_scores_match_penumbria_semantics():
+    labels = np.zeros((2, 3, 4), dtype=np.int32)
+    labels[0, 0, :3] = 1
+    labels[0, 1, :3] = 2
+    labels[1, 0, :3] = 3
+
+    scores = np.zeros(labels.shape, dtype=np.float32)
+    scores[labels == 1] = [0.7, np.nan, 0.9]
+    scores[labels == 2] = [0.7, 0.8, 0.9]
+    scores[labels == 3] = np.nan
+
+    got = filter_instances_3d(
+        labels,
+        scores,
+        minimum_cell_size=2,
+        cell_confidence_minimum=0.5,
+    )
+    expected = reference_filter(labels, scores, 2, 0.5)
+    np.testing.assert_array_equal(got, expected)
+
+    # Penumbria's top-1 comparison rejects an instance if any NaN is present,
+    # because NumPy orders NaN as the largest value for argpartition/sort.
+    assert np.unique(got).tolist() == [0, 1]
+    assert np.all(got[labels == 2] == 1)
 
 
 def test_negative_labels_rejected():
