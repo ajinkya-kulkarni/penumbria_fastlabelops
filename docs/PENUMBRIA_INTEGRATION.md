@@ -1,7 +1,9 @@
 # Penumbria integration
 
 This repository is a companion implementation. It does not vendor or modify Penumbria source code.
-The notes below describe the two minimal call-site changes for the current Penumbria `main` branch.
+The notes below describe the two minimal call-site changes audited against Penumbria commit
+`a4f869354a9b198f2fdf6ff2122ef1d31541b8aa` (the `main` head on 2026-09-05).
+Re-check the call sites if Penumbria moves beyond that revision.
 
 Penumbria is currently published for review only under an all-rights-reserved license. Confirm that you
 have permission to modify/use Penumbria before applying these changes.
@@ -91,7 +93,8 @@ package intentionally has no 2D API.
 The 3D compiled function preserves the current rules exactly:
 
 - `voxel_count > minimum_cell_size` (strictly greater);
-- `max(prediction[instance]) > cell_confidence_minimum` (strictly greater);
+- the maximum prediction value must be `> cell_confidence_minimum` (strictly greater);
+- an instance containing a NaN score is rejected, matching Penumbria's NumPy top-1 comparison;
 - survivors receive compact IDs `1..N` in ascending original-label order;
 - background stays `0`.
 
