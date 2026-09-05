@@ -33,6 +33,8 @@ ids, boxes = label_bboxes_3d(labels)
 
 Upper bounds are exclusive. Penumbria can then build each local object mask from its small crop instead of scanning the full volume once per label.
 
+The implementation is intentionally optimized for Penumbria-style compact instance IDs. Extremely sparse external IDs larger than the number of voxels are rejected rather than causing pathological allocations.
+
 ### `filter_instances_3d`
 
 ```python
@@ -49,13 +51,14 @@ filtered = filter_instances_3d(
 The behavior intentionally matches Penumbria's current post-watershed rules:
 
 - keep an instance only when `voxel_count > minimum_cell_size`
-- keep it only when `max(prediction[instance]) > cell_confidence_minimum`
+- keep it only when its maximum prediction value is `> cell_confidence_minimum`
+- reject an instance containing a NaN prediction value, matching Penumbria's NumPy top-1 comparison
 - compact survivors to `1..N` in ascending original-label order
 - preserve `0` as background
 
 ## Penumbria integration
 
-See [`docs/PENUMBRIA_INTEGRATION.md`](docs/PENUMBRIA_INTEGRATION.md) for the two minimal current-`main` call-site changes. The guide preserves Penumbria's existing local EDT construction and keeps the original 2D postprocessing path as a fallback.
+See [`docs/PENUMBRIA_INTEGRATION.md`](docs/PENUMBRIA_INTEGRATION.md) for the two minimal call-site changes. The guide is pinned to the Penumbria revision it was audited against, preserves Penumbria's existing local EDT construction, and keeps the original 2D postprocessing path as a fallback.
 
 ## Speed
 
@@ -103,5 +106,7 @@ python setup.py build_ext --inplace
 PYTHONPATH=src pytest -q
 PYTHONPATH=src python benchmarks/benchmark_penumbria.py
 ```
+
+CI additionally checks the minimum declared Python version, Linux/macOS/Windows builds, Ruff, and source/wheel packaging.
 
 This repository is an independent companion implementation and does not vendor or copy Penumbria source code.
