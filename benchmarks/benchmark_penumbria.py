@@ -24,8 +24,10 @@ def make_volume(shape=(64, 256, 256), instances=500, seed=7):
         z = int(rng.integers(rz, d - rz))
         y = int(rng.integers(ry, h - ry))
         x = int(rng.integers(rx, w - rx))
-        labels[z-rz:z+rz+1, y-ry:y+ry+1, x-rx:x+rx+1] = label_id
-        scores[z-rz:z+rz+1, y-ry:y+ry+1, x-rx:x+rx+1] = rng.uniform(0.35, 1.0)
+        labels[z - rz : z + rz + 1, y - ry : y + ry + 1, x - rx : x + rx + 1] = label_id
+        scores[z - rz : z + rz + 1, y - ry : y + ry + 1, x - rx : x + rx + 1] = rng.uniform(
+            0.35, 1.0
+        )
     return labels, scores
 
 
@@ -90,12 +92,18 @@ def main():
     new_t, new_result = timed(label_bboxes_3d, labels, repeats=args.repeats)
     np.testing.assert_array_equal(old_result[0], new_result[0])
     np.testing.assert_array_equal(old_result[1], new_result[1])
-    print(f"label_bboxes_3d:  baseline {old_t:.4f}s | fast {new_t:.4f}s | speedup {old_t/new_t:.1f}x")
+    print(
+        f"label_bboxes_3d: baseline {old_t:.4f}s | fast {new_t:.4f}s | "
+        f"speedup {old_t / new_t:.1f}x"
+    )
 
     old_t, old_result = timed(baseline_filter, labels, scores, 9, 0.51, repeats=args.repeats)
     new_t, new_result = timed(filter_instances_3d, labels, scores, 9, 0.51, repeats=args.repeats)
     np.testing.assert_array_equal(old_result, new_result)
-    print(f"filter_instances_3d: baseline {old_t:.4f}s | fast {new_t:.4f}s | speedup {old_t/new_t:.1f}x")
+    print(
+        f"filter_instances_3d: baseline {old_t:.4f}s | fast {new_t:.4f}s | "
+        f"speedup {old_t / new_t:.1f}x"
+    )
 
 
 if __name__ == "__main__":
