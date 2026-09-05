@@ -3,6 +3,7 @@
 #include <numpy/arrayobject.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -87,8 +88,12 @@ PyObject* bboxes_impl(PyArrayObject* labels) {
                     continue;
                 }
                 const size_t id = static_cast<size_t>(id64);
-                grow_to(min_z, id, inf); grow_to(min_y, id, inf); grow_to(min_x, id, inf);
-                grow_to(max_z, id, int64_t{-1}); grow_to(max_y, id, int64_t{-1}); grow_to(max_x, id, int64_t{-1});
+                grow_to(min_z, id, inf);
+                grow_to(min_y, id, inf);
+                grow_to(min_x, id, inf);
+                grow_to(max_z, id, int64_t{-1});
+                grow_to(max_y, id, int64_t{-1});
+                grow_to(max_x, id, int64_t{-1});
                 grow_to(seen, id, uint8_t{0});
                 max_id = std::max(max_id, id);
                 seen[id] = 1;
@@ -152,11 +157,16 @@ PyObject* py_label_bboxes_3d(PyObject*, PyObject* args) {
         return nullptr;
     }
     switch (PyArray_TYPE(labels)) {
-        case NPY_INT32: return bboxes_impl<int32_t>(labels);
-        case NPY_UINT32: return bboxes_impl<uint32_t>(labels);
-        case NPY_INT64: return bboxes_impl<int64_t>(labels);
-        case NPY_UINT64: return bboxes_impl<uint64_t>(labels);
-        default: break;
+        case NPY_INT32:
+            return bboxes_impl<int32_t>(labels);
+        case NPY_UINT32:
+            return bboxes_impl<uint32_t>(labels);
+        case NPY_INT64:
+            return bboxes_impl<int64_t>(labels);
+        case NPY_UINT64:
+            return bboxes_impl<uint64_t>(labels);
+        default:
+            break;
     }
     PyErr_SetString(PyExc_TypeError, "unsupported labels dtype");
     return nullptr;
@@ -175,6 +185,7 @@ PyObject* filter_impl(
 
     std::vector<uint64_t> counts(16, 0);
     std::vector<double> maxima(16, -std::numeric_limits<double>::infinity());
+    std::vector<uint8_t> has_nan(16, 0);
     size_t max_id = 0;
     bool negative = false;
 
@@ -198,10 +209,13 @@ PyObject* filter_impl(
         const size_t id = static_cast<size_t>(id64);
         grow_to(counts, id, uint64_t{0});
         grow_to(maxima, id, -std::numeric_limits<double>::infinity());
+        grow_to(has_nan, id, uint8_t{0});
         max_id = std::max(max_id, id);
         ++counts[id];
         const double score = static_cast<double>(score_data[i]);
-        if (score > maxima[id]) {
+        if (std::isnan(score)) {
+            has_nan[id] = 1;
+        } else if (score > maxima[id]) {
             maxima[id] = score;
         }
     }
@@ -215,7 +229,7 @@ PyObject* filter_impl(
     std::vector<LabelT> mapping(max_id + 1, static_cast<LabelT>(0));
     uint64_t next_id = 1;
     for (size_t id = 1; id <= max_id; ++id) {
-        if (counts[id] > minimum_cell_size && maxima[id] > confidence_minimum) {
+        if (!has_nan[id] && counts[id] > minimum_cell_size && maxima[id] > confidence_minimum) {
             if (next_id > static_cast<uint64_t>(std::numeric_limits<LabelT>::max())) {
                 PyErr_SetString(PyExc_OverflowError, "too many surviving labels for output dtype");
                 return nullptr;
@@ -260,7 +274,8 @@ PyObject* py_filter_instances_3d(PyObject*, PyObject* args) {
     if (!validate_labels(labels)) {
         return nullptr;
     }
-    if (PyArray_NDIM(scores) != 3 || !scores_type_ok(PyArray_TYPE(scores)) || !PyArray_ISCARRAY_RO(scores)) {
+    if (PyArray_NDIM(scores) != 3 || !scores_type_ok(PyArray_TYPE(scores)) ||
+        !PyArray_ISCARRAY_RO(scores)) {
         PyErr_SetString(PyExc_ValueError, "scores must be contiguous float32 or float64 3D array");
         return nullptr;
     }
@@ -277,11 +292,16 @@ PyObject* py_filter_instances_3d(PyObject*, PyObject* args) {
     return filter_impl<LABEL_T, double>(labels, scores, minimum_cell_size, confidence_minimum)
 
     switch (PyArray_TYPE(labels)) {
-        case NPY_INT32: DISPATCH_SCORE(int32_t);
-        case NPY_UINT32: DISPATCH_SCORE(uint32_t);
-        case NPY_INT64: DISPATCH_SCORE(int64_t);
-        case NPY_UINT64: DISPATCH_SCORE(uint64_t);
-        default: break;
+        case NPY_INT32:
+            DISPATCH_SCORE(int32_t);
+        case NPY_UINT32:
+            DISPATCH_SCORE(uint32_t);
+        case NPY_INT64:
+            DISPATCH_SCORE(int64_t);
+        case NPY_UINT64:
+            DISPATCH_SCORE(uint64_t);
+        default:
+            break;
     }
 #undef DISPATCH_SCORE
 
