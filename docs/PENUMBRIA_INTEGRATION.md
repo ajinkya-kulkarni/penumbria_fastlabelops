@@ -1,7 +1,7 @@
 # Penumbria integration
 
 This repository is a companion implementation. It does not vendor or modify Penumbria source code.
-The notes below describe the two minimal call-site changes audited against Penumbria commit
+The notes below describe three focused call-site changes audited against Penumbria commit
 `a4f869354a9b198f2fdf6ff2122ef1d31541b8aa` (the `main` head on 2026-09-05).
 Re-check the call sites if Penumbria moves beyond that revision.
 
@@ -40,8 +40,6 @@ for i, box in tqdm(zip(label_ids, label_boxes), total=len(label_ids)):
 
     z0, y0, x0, z1, y1, x1 = map(int, box)
 
-    # Same local binary object used by the original EDT path, but created from
-    # the small bounding-box crop rather than a whole-volume np.argwhere scan.
     local_object = label_img[z0:z1, y0:y1, x0:x1] == i
     bounding_box = np.pad(local_object.astype(np.float64), 1, mode="constant")
 
@@ -67,7 +65,45 @@ Why this is equivalent to the current construction:
 The expensive part changes from approximately one full-volume scan per possible label to one compiled
 scan for all observed labels, followed only by small per-object crops required by Penumbria's EDT.
 
-## 2. `postprocess.py`: use the fused 3D instance filter
+## 2. `postprocess.py`: replace the generic 3D watershed wrapper
+
+Add:
+
+```python
+from penumbria_fastlabelops import watershed_3d
+```
+
+For the current 3D path, replace:
+
+```python
+background_image = (prediction > background_threshold).astype(int)
+wts = watershed(-prediction, labeled_array, mask=background_image)
+```
+
+with:
+
+```python
+if prediction.ndim == 3:
+    wts = watershed_3d(
+        prediction,
+        labeled_array,
+        background_threshold=background_threshold,
+    )
+else:
+    background_image = (prediction > background_threshold).astype(int)
+    wts = watershed(-prediction, labeled_array, mask=background_image)
+```
+
+`watershed_3d` is intentionally specialized to exactly the scikit-image mode Penumbria currently
+uses: supplied markers, default connectivity (6-neighbor in 3D), `compactness=0`, and
+`watershed_line=False`. It preserves marker values and uses the same priority-queue flood and age
+Tie-break behavior.
+
+The specialized implementation does not materialize the negated prediction, explicit background mask,
+float64 image conversion, padded image/marker/mask arrays, or final crop copy required by the generic
+scikit-image wrapper.
+
+## 3. `postprocess.py`: use the fused 3D instance filter
 
 Add:
 
@@ -98,9 +134,13 @@ The 3D compiled function preserves the current rules exactly:
 - survivors receive compact IDs `1..N` in ascending original-label order;
 - background stays `0`.
 
-## Expected operation-level speedup
+## Validation and speed
 
-The repository benchmark uses the corresponding Penumbria-style baselines and verifies output
+All equivalence tests use exact array equality. The watershed suite includes random continuous fields,
+flat plateaus, quantized ties, mask holes, masked-out markers, non-contiguous inputs, and all supported
+marker integer dtypes.
+
+The label-operation benchmark uses the corresponding Penumbria-style baselines and verifies output
 equivalence before timing. On the documented synthetic 64 x 256 x 256 (4.19M voxel), 500-instance
 workload, representative conservative results are:
 
@@ -109,5 +149,6 @@ workload, representative conservative results are:
 | preprocessing bbox discovery | ~6.1 s | ~0.008 s | ~800x |
 | 3D post-watershed filtering | ~0.028 s | ~0.009 s | ~3x |
 
-These are speedups for these two operations only, not end-to-end Penumbria training or inference.
-Run `python benchmarks/benchmark_penumbria.py` on the target machine for local numbers.
+Run `python benchmarks/benchmark_penumbria.py` for the two label operations and
+`python benchmarks/benchmark_watershed.py` for the watershed comparison on the target machine.
+These are operation-level measurements, not end-to-end Penumbria training or inference claims.
