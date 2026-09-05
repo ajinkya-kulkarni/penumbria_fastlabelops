@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e . pytest
+      - run: python -m pip install -e . pytest scikit-image
       - run: pytest -q
 
   minimum-python:
@@ -38,6 +38,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e . pytest ruff build
+      - run: python -m pip install -e . pytest ruff build scipy scikit-image
       - run: ruff check src tests benchmarks
       - run: python -m build
+      - run: python benchmarks/benchmark_watershed.py --shape 32,128,128 --repeats 2
