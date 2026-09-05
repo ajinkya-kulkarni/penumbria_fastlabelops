@@ -33,7 +33,7 @@ ids, boxes = label_bboxes_3d(labels)
 
 Upper bounds are exclusive. Penumbria can then build each local object mask from its small crop instead of scanning the full volume once per label.
 
-The implementation is intentionally optimized for Penumbria-style compact instance IDs. Extremely sparse external IDs larger than the number of voxels are rejected rather than causing pathological allocations.
+The implementation is intentionally optimized for Penumbria-style compact instance IDs: internal bookkeeping scales with `max(label)`. Arbitrary highly sparse label spaces are outside the supported use case, and IDs larger than the voxel count are rejected defensively.
 
 ### `filter_instances_3d`
 
