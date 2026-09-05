@@ -18,11 +18,17 @@ def _labels3d(labels: NDArray[np.integer]) -> NDArray[np.integer]:
     return np.ascontiguousarray(arr)
 
 
-def label_bboxes_3d(labels: NDArray[np.integer]) -> tuple[NDArray[np.integer], NDArray[np.int64]]:
+def label_bboxes_3d(
+    labels: NDArray[np.integer],
+) -> tuple[NDArray[np.integer], NDArray[np.int64]]:
     """Return observed foreground label IDs and their 3D bounding boxes.
 
     Bounding boxes are ``(z0, y0, x0, z1, y1, x1)`` with exclusive upper bounds.
     Label 0 is background and is omitted. IDs are returned in ascending order.
+
+    This is intentionally optimized for Penumbria-style compact labels: internal
+    storage scales with the maximum label ID. Arbitrary extremely sparse IDs are
+    outside the supported use case.
     """
     arr = _labels3d(labels)
     return _core.label_bboxes_3d(arr)
@@ -38,8 +44,12 @@ def filter_instances_3d(
 
     An instance is retained iff its voxel count is strictly greater than
     ``minimum_cell_size`` and its maximum score is strictly greater than
-    ``cell_confidence_minimum``. Retained labels are compacted to ``1..N`` in
-    ascending original-label order. Background remains 0.
+    ``cell_confidence_minimum``. An instance containing NaN is rejected, matching
+    Penumbria's NumPy top-1 comparison. Retained labels are compacted to ``1..N``
+    in ascending original-label order. Background remains 0.
+
+    Labels are expected to be Penumbria-style compact instance IDs; internal
+    storage scales with the maximum label ID.
     """
     label_arr = _labels3d(labels)
     score_arr = np.asarray(scores)
